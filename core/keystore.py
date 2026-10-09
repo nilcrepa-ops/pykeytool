@@ -21,11 +21,10 @@ def save_keystore_pkcs12(keystore_path: str, alias: str, private_key, certificat
     print(f"Alias: {alias}"
     )
 
-def load_keystore_pkcs12(keystore_path: str, alias: str, password: str):
+def load_keystore_pkcs12(keystore_path: str, password: str):
     if not os.path.exists(keystore_path):
         raise FileNotFoundError(f"Keystore not found: {keystore_path}")
     
-    alias_bytes = alias.encode('utf-8')
     pass_bytes = password.encode('utf-8')
 
     with open(keystore_path, "rb") as f:

@@ -72,3 +72,16 @@ def generate_autosigned_certificate(private_key, dname: str, days_valid=365):
 
     return certificate
     
+def obtain_certificate_info(certificate):
+    sha256_fingerprint = certificate.fingerprint(hashes.SHA256()).hex()
+    sha1_fingerprint = certificate.fingerprint(hashes.SHA1()).hex()
+
+    return {
+        'owner': certificate.subject.rfc4514_string(),
+        'issuer': certificate.issuer.rfc4514_string(),
+        'serial_number': hex(certificate.serial_number)[2:],
+        'not_valid_before': certificate.not_valid_before_utc,
+        'not_valid_after': certificate.not_valid_after_utc,
+        'sha256': sha256_fingerprint,
+        'sha1': sha1_fingerprint
+    }
