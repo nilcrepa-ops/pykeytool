@@ -33,5 +33,10 @@ def create_parser():
     parser_print.add_argument('-file', required = True, help = 'Certificate file path')
     parser_print.add_argument('-v', action = 'store_true', help = 'Print certificate details')
 
+    parser_delete = subparsers.add_parser('delete', help = 'Delete entry')
+    parser_delete.add_argument('-keystore', required = True, help = 'Keystore file')
+    parser_delete.add_argument('-storepass', required = None, default = None, help = 'Store password')
+    parser_delete.add_argument('-alias', required = True, help = 'Alias of the entry to delete')
+
     return parser
 

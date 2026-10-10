@@ -1,4 +1,5 @@
 #mi_laia_key laia69
+from core.keystore import delete_pkcs12_entry
 from core.crypto import obtain_certificate_info
 from core.keystore import load_keystore_pkcs12
 import sys
@@ -9,20 +10,13 @@ from core.keystore import *
 
 def execute_genkeypair(args):
     password = args.storepass
-    if not password:
-        password = getpass.getpass("Enter keystore password: ")
-        if len(password) == 0:
-            print("Password cannot be empty")
-            sys.exit(1)
-        elif len(password) < 6:
-            print("Password must be at least 6 characters long")
-            sys.exit(1)
+    password = ask_password(password)
 
     print(f'Generating key pair {args.keyalg} of {args.keysize} bits...')
     private_key = generate_rsa_key(args.keysize)
 
     print(f'Generating self-signed certificate...')
-    dname = args.dname if args.dname else f'CN={args.alias}, O=PracticaDAM, C=ES'
+    dname = args.dname if args.dname else f'CN={args.alias}, O=KeytoolReplica, C=ES'
     certificate = generate_autosigned_certificate(private_key, dname, args.validity)
 
     print(f'Packaging and saving in {args.keystore} with alias {args.alias}')
@@ -40,20 +34,18 @@ def execute_genkeypair(args):
 
 def execute_list(args):
     password = args.storepass
-    if not password:
-        password = getpass.getpass("Enter keystore password: ")
-        if len(password) == 0:
-            print("Password cannot be empty")
-            sys.exit(1)
-        elif len(password) < 6:
-            print("Password must be at least 6 characters long")
-            sys.exit(1)
+    password = ask_password(password)
     
     try:
         key, cert, cas = load_keystore_pkcs12(args.keystore, password)
     except Exception as error:
         print(f"Error loading keystore: {error}")
         sys.exit(1)
+    
+    print(f"\nKeystore type: PKCS12\n")
+    if not cert and not key and not cas:
+        print("No entries found.\n")
+        return    
     
     if args.v:
         info = obtain_certificate_info(cert)
@@ -67,14 +59,8 @@ def execute_list(args):
 
 def execute_exportcert(args):
     password = args.storepass
-    if not password:
-        password = getpass.getpass("Enter store password: ")
-        if len(password) == 0:
-            print("Password cannot be empty")
-            sys.exit(1)
-        elif len(password) < 6:
-            print("Password must be at least 6 characters long")
-            sys.exit(1)
+    password = ask_password(password)
+    
     try:
         key, cert, cas = load_keystore_pkcs12(args.keystore, password)
     except Exception as error:
@@ -122,6 +108,28 @@ def execute_printcert(args):
         print(f'SHA1 fingerprint: {cert.fingerprint(hashes.SHA1()).hex()}')
         print(f'SHA256 fingerprint: {cert.fingerprint(hashes.SHA256()).hex()}')
 
+def execute_delete(args):
+    password = args.storepass
+    password = ask_password(password)
+
+    try:
+        delete_pkcs12_entry(args.keystore, args.alias, password)
+        print(f"Deleted alias '{args.alias}' from {args.keystore}")
+    except Exception as error:
+        print(f"Error deleting entry: {error}")
+        sys.exit(1)
+
+def ask_password(password: str) -> str:
+    if not password:
+        password = getpass.getpass("Enter keystore password: ")
+        if len(password) == 0:
+            print("Password cannot be empty")
+            sys.exit(1)
+        elif len(password) < 6:
+            print("Password must be at least 6 characters long")
+            sys.exit(1)
+    return password
+
 def main():
     parser = create_parser()
 
@@ -138,6 +146,8 @@ def main():
         execute_exportcert(args)
     elif args.command == "printcert":
         execute_printcert(args)
+    elif args.command == "delete":
+        execute_delete(args)
     else:
         parser.print_help()
         sys.exit(1)
