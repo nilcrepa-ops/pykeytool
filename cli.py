@@ -29,5 +29,9 @@ def create_parser():
     parser_export.add_argument('-keypass', required = None, default = None, help = 'Key password')
     parser_export.add_argument('-rfc', action = 'store_true', help = 'Export in RFC1422 format')
 
+    parser_print = subparsers.add_parser('printcert', help = 'Print certification file content')
+    parser_print.add_argument('-file', required = True, help = 'Certificate file path')
+    parser_print.add_argument('-v', action = 'store_true', help = 'Print certificate details')
+
     return parser
 

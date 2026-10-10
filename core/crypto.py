@@ -88,3 +88,15 @@ def obtain_certificate_info(certificate):
 def serialize_certificate(certificate, rfc_format: bool = False) -> bytes:
     encoding = serialization.Encoding.PEM if rfc_format else serialization.Encoding.DER
     return certificate.public_bytes(encoding)
+
+def load_certificate_file(file_path: str):
+    with open(file_path, 'rb') as f:
+        data = f.read()
+
+    try:
+        return x509.load_pem_x509_certificate(data)
+    except ValueError:
+        try:
+            return x509.load_der_x509_certificate(data)
+        except ValueError as e:
+            raise ValueError(f'Error loading certificate: {e}')

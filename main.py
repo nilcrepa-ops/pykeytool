@@ -95,6 +95,33 @@ def execute_exportcert(args):
         print(f'Error exporting certificate: {e}')
         sys.exit(1)    
     
+def execute_printcert(args):
+    try:
+        cert = load_certificate_file(args.file)
+    except Exception as error:
+        print(f"Error loading certificate: {error}")
+        sys.exit(1)
+    
+    info = obtain_certificate_info(cert)
+    
+    print(f'Owner: {info['owner']}')
+    print(f'Issuer: {info['issuer']}')
+    print(f'Serial number: {info['serial_number']}')
+    print(f'Not valid before: {info['not_valid_before']}')
+    print(f'Not valid after: {info['not_valid_after']}')
+    print(f'SHA1 fingerprint: {info['sha1']}')
+    print(f'SHA256 fingerprint: {info['sha256']}')
+
+    if args.v:
+        print(f'Version: {cert.version.value}')
+        print(f'Subject: {cert.subject.rfc4514_string()}')
+        print(f'Issuer: {cert.issuer.rfc4514_string()}')
+        print(f'Serial number: {hex(cert.serial_number)[2:]}')
+        print(f'Not valid before: {cert.not_valid_before_utc}')
+        print(f'Not valid after: {cert.not_valid_after_utc}')
+        print(f'SHA1 fingerprint: {cert.fingerprint(hashes.SHA1()).hex()}')
+        print(f'SHA256 fingerprint: {cert.fingerprint(hashes.SHA256()).hex()}')
+
 def main():
     parser = create_parser()
 
@@ -109,6 +136,8 @@ def main():
         execute_list(args)
     elif args.command == "exportcert":
         execute_exportcert(args)
+    elif args.command == "printcert":
+        execute_printcert(args)
     else:
         parser.print_help()
         sys.exit(1)
