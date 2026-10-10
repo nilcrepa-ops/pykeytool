@@ -21,5 +21,13 @@ def create_parser():
     parser_list.add_argument("-storepass",default = None, help ="Keystore password")
     parser_list.add_argument("-v",action="store_true", help="Print certificate details")
 
+    parser_export = subparsers.add_parser('exportcert', help = 'Export certificate')
+    parser_export.add_argument('-alias', required = True, help = 'Alias of the entry to export')
+    parser_export.add_argument('-keystore', required = None, default = None, help = 'Keystore fiel path')
+    parser_export.add_argument('-file', required = True, help = 'Certificate file path')
+    parser_export.add_argument('-storepass', required = None, default = None, help = 'Store password')
+    parser_export.add_argument('-keypass', required = None, default = None, help = 'Key password')
+    parser_export.add_argument('-rfc', action = 'store_true', help = 'Export in RFC1422 format')
+
     return parser
 

@@ -1,3 +1,4 @@
+#mi_laia_key laia69
 from core.crypto import obtain_certificate_info
 from core.keystore import load_keystore_pkcs12
 import sys
@@ -64,6 +65,36 @@ def execute_list(args):
         print(f'SHA1 fingerprint: {info['sha1']}')
         print(f'SHA256 fingerprint: {info['sha256']}')
 
+def execute_exportcert(args):
+    password = args.storepass
+    if not password:
+        password = getpass.getpass("Enter store password: ")
+        if len(password) == 0:
+            print("Password cannot be empty")
+            sys.exit(1)
+        elif len(password) < 6:
+            print("Password must be at least 6 characters long")
+            sys.exit(1)
+    try:
+        key, cert, cas = load_keystore_pkcs12(args.keystore, password)
+    except Exception as error:
+        print(f"Error loading keystore: {error}")
+        sys.exit(1)
+    
+    if not cert:
+        print(f'Error: No certificate found in {args.keystore}')
+        sys.exit(1)
+
+    cert_bytes = serialize_certificate(cert, rfc_format=args.rfc)
+
+    try:
+        with open(args.file, "wb") as f:
+            f.write(cert_bytes)
+        print(f'Certificate exported to {args.file}')
+    except Exception as e:
+        print(f'Error exporting certificate: {e}')
+        sys.exit(1)    
+    
 def main():
     parser = create_parser()
 
@@ -76,6 +107,8 @@ def main():
         execute_genkeypair(args)
     elif args.command == "list":
         execute_list(args)
+    elif args.command == "exportcert":
+        execute_exportcert(args)
     else:
         parser.print_help()
         sys.exit(1)

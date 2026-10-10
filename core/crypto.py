@@ -1,11 +1,10 @@
 import datetime
 from cryptography import x509
 from cryptography.x509.oid import NameOID
-from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 def generate_rsa_key(bit_size: int = 2048):
-    """Generate an RSA private key"""
     private_key = rsa.generate_private_key(
         public_exponent=65537,
         key_size=bit_size,
@@ -85,3 +84,7 @@ def obtain_certificate_info(certificate):
         'sha256': sha256_fingerprint,
         'sha1': sha1_fingerprint
     }
+
+def serialize_certificate(certificate, rfc_format: bool = False) -> bytes:
+    encoding = serialization.Encoding.PEM if rfc_format else serialization.Encoding.DER
+    return certificate.public_bytes(encoding)
