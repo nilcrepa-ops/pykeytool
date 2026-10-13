@@ -100,3 +100,13 @@ def load_certificate_file(file_path: str):
             return x509.load_der_x509_certificate(data)
         except ValueError as e:
             raise ValueError(f'Error loading certificate: {e}')
+
+def generate_csr(private_key, cert, hash_algorithm=hashes.SHA256()) -> bytes:
+    builder = (
+        x509.CertificateSigningRequestBuilder()
+        .subject_name(cert.subject)
+    )
+
+    csr = builder.sign(private_key, hash_algorithm)
+
+    return csr.public_bytes(serialization.Encoding.PEM)

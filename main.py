@@ -119,6 +119,29 @@ def execute_delete(args):
         print(f"Error deleting entry: {error}")
         sys.exit(1)
 
+def execute_certreq(args):
+    password = args.storepass
+    password = ask_password(password)
+
+    try:
+        key, cert, _ = load_keystore_pkcs12(args.keystore, password)
+    except Exception as error:
+        print(f'Error loading keystore: {error}')
+        sys.exit(1)
+
+    if not key or not cert:
+        print(f'Error: Entry with alias {args.alias} not found or incomplete')
+        sys.exit(1)
+
+    try:
+        csr_pem = generate_csr(key, cert)
+        with open (args.file, 'wb') as f:
+            f.write(csr_pem)
+        print(f'Certification request stored in file {args.file}')
+    except Exception as error:
+        print(f'Error generating CSR: {error}')
+        sys.exit(1)
+
 def ask_password(password: str) -> str:
     if not password:
         password = getpass.getpass("Enter keystore password: ")
@@ -138,6 +161,11 @@ def main():
         sys.exit(1)
     
     args = parser.parse_args()
+
+    if not args.command:
+        parser.print_help()
+        sys.exit(0)
+    
     if args.command == "genkeypair":
         execute_genkeypair(args)
     elif args.command == "list":
@@ -148,6 +176,8 @@ def main():
         execute_printcert(args)
     elif args.command == "delete":
         execute_delete(args)
+    elif args.command == "certreq":
+        execute_certreq(args)
     else:
         parser.print_help()
         sys.exit(1)

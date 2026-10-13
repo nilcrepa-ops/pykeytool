@@ -1,3 +1,6 @@
+To activate scripts:
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process
+
 To begin from 0:
     Remove-Item -Force {filenames_to_delete_separated_by_comma} -ErrorAction SilentlyContinue
 
@@ -16,12 +19,13 @@ Inspect certificate:
 Delete entry:
     python main.py delete -alias {alias} -keystore {keystore}
 
+Generate CSR:
+    python main.py certreq -alias {alias} -keystore {keystore} -file {csr}
+
 pendienteS:
 changealias: Modifica el alias (friendlyName) de una entrada existente sin regenerar las claves.
 
 importcert: Importa un certificado público (.crt) al almacén como entrada de confianza (trustedCertEntry).
-
-certreq: Genera un archivo CSR (Certificate Signing Request) en formato PEM a partir de la clave privada del almacén para solicitar la firma a una CA.
 
 storepasswd: Permite cambiar la contraseña maestra que protege y cifra el archivo .p12.
 

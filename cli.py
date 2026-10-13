@@ -1,7 +1,14 @@
 import argparse
 
 def create_parser():
-    parser = argparse.ArgumentParser(description="Keytool in python for key and certificate")
+    parser = argparse.ArgumentParser(
+        prog = 'pykeytool',
+        description="Keytool in python for key and certificate",
+        formatter_class = argparse.RawDescriptionHelpFormatter,
+        add_help= False
+        )
+
+    parser.add_argument('--help', '-h', '-help', action = 'help', help = 'Show the help message')
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
@@ -38,5 +45,12 @@ def create_parser():
     parser_delete.add_argument('-storepass', required = None, default = None, help = 'Store password')
     parser_delete.add_argument('-alias', required = True, help = 'Alias of the entry to delete')
 
+    parser_certreq = subparsers.add_parser('certreq', help = 'Generate a CSR')
+    parser_certreq.add_argument('-alias', required = True, help = 'Alias of the entry to generate CSR')
+    parser_certreq.add_argument('-keystore', required = True, help = 'Keystore file')
+    parser_certreq.add_argument('-storepass', required = None, default = None, help = 'Store password')
+    parser_certreq.add_argument('-sigalg', default = 'SHA256withRSA', help = 'Signature algorithm')
+    parser_certreq.add_argument('-file', required = True, help = 'CSR file path')
+    
     return parser
 
