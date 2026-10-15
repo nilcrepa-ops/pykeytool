@@ -28,6 +28,13 @@ def create_parser():
     parser_list.add_argument("-storepass",default = None, help ="Keystore password")
     parser_list.add_argument("-v",action="store_true", help="Print certificate details")
 
+    parser_certreq = subparsers.add_parser('certreq', help = 'Generate a CSR')
+    parser_certreq.add_argument('-alias', required = True, help = 'Alias of the entry to generate CSR')
+    parser_certreq.add_argument('-keystore', required = True, help = 'Keystore file')
+    parser_certreq.add_argument('-storepass', required = None, default = None, help = 'Store password')
+    parser_certreq.add_argument('-sigalg', default = 'SHA256withRSA', help = 'Signature algorithm')
+    parser_certreq.add_argument('-file', required = True, help = 'CSR file path')
+
     parser_export = subparsers.add_parser('exportcert', help = 'Export certificate')
     parser_export.add_argument('-alias', required = True, help = 'Alias of the entry to export')
     parser_export.add_argument('-keystore', required = None, default = None, help = 'Keystore fiel path')
@@ -45,12 +52,7 @@ def create_parser():
     parser_delete.add_argument('-storepass', required = None, default = None, help = 'Store password')
     parser_delete.add_argument('-alias', required = True, help = 'Alias of the entry to delete')
 
-    parser_certreq = subparsers.add_parser('certreq', help = 'Generate a CSR')
-    parser_certreq.add_argument('-alias', required = True, help = 'Alias of the entry to generate CSR')
-    parser_certreq.add_argument('-keystore', required = True, help = 'Keystore file')
-    parser_certreq.add_argument('-storepass', required = None, default = None, help = 'Store password')
-    parser_certreq.add_argument('-sigalg', default = 'SHA256withRSA', help = 'Signature algorithm')
-    parser_certreq.add_argument('-file', required = True, help = 'CSR file path')
+    
     
     return parser
 

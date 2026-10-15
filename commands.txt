@@ -22,17 +22,17 @@ Delete entry:
 Generate CSR:
     python main.py certreq -alias {alias} -keystore {keystore} -file {csr}
 
-pendienteS:
-changealias: Modifica el alias (friendlyName) de una entrada existente sin regenerar las claves.
+Show help:
+    python main.py --help
 
-importcert: Importa un certificado público (.crt) al almacén como entrada de confianza (trustedCertEntry).
+EVALUABLE:
+help
+Crear certificado:
+    nuevo
+    no repetir alias
+    2 alias
+export alias
 
-storepasswd: Permite cambiar la contraseña maestra que protege y cifra el archivo .p12.
-
---help: Shows the help message and exits.
-
-# 3. Extracción de Solicitud de Firma de Certificado (CSR): 
-python3 mykeytool.py --certreq 
-# Comportamiento esperado: 
-# - Pide contraseña del KeyStore y del alias específico. 
-# - Recupera la clave privada y genera un archivo .csr en formato PEM.
+github
+extras
+explicar codigo

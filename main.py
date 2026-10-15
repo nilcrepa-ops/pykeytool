@@ -1,4 +1,3 @@
-#mi_laia_key laia69
 from core.keystore import delete_pkcs12_entry
 from core.crypto import obtain_certificate_info
 from core.keystore import load_keystore_pkcs12
