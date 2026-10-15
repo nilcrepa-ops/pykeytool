@@ -16,6 +16,17 @@ This document lists **what is missing or broken**. It is based on reading every 
 file plus executing both branches and cross-checking their output against the real
 `keytool` (see [Appendix A](#appendix-a--how-to-reproduce)).
 
+> **Status update (P0 pass, 2026-10-15).** The P0 list in §10 has been implemented on
+> the working tree. What changed: the CLI is now wired to the crypto layer and lives in
+> a single codebase; `-keysize`/`-validity` no longer crash; `-keyalg` and `-sigalg` are
+> honoured; aliases are verified on every alias-taking command; errors are reported as
+> `keytool error: …` on stderr with exit code 1 instead of tracebacks; the data-loss
+> bugs are gone (an existing store is never truncated); and dependencies are declared.
+> The one P0 item that is only *mitigated*, not solved, is true multi-entry stores —
+> see §3 and §11. Sections below still describe the pre-fix state for context.
+>
+> **§11** at the bottom of this file tracks the P0 items and their current state.
+
 ---
 
 ## 0. Executive summary
@@ -104,7 +115,7 @@ entries (the code requires a private key).
 Implemented [dev]: `-file`, `-v`. Missing: `-sslserver` (fetch from a TLS endpoint),
 `-jarfile` (read a signed JAR's certificates), `-keystore` + `-alias` (print from a
 store), `-rfc`, `-trustcacerts`, `-storetype`, provider flags. Its `-v` output is much
-thinner than `keytool`'s (no extensions, no public key details, no MD5).
+thinner than `keytool`'s (no extensions, no public key details).
 
 ### `-certreq`
 Implemented [dev]: `-alias`, `-keystore`, `-storepass`, `-file`, `-sigalg` (ignored).
@@ -205,7 +216,7 @@ still produced a 2048-bit RSA key while the program printed `Generating key pair
 | **Per-command help** | `keytool -command --help` documents every option. `dev` only adds a top-level `--help`/`-h`/`-help` (argparse already gives bare `-h` only); `main` has no custom help handling at all |
 | **`create_parser` vs `crear_parser`** | The function name differs between `main` (`cli.py:3`) and `dev` (`cli.py:3`), so `main.py` cannot be swapped between branches; mixed Spanish/English naming throughout (`crear_parser`, `generate_autosigned_certificate`, `emmisor`) |
 | **`-v` verbosity** | Only `list` and `printcert` accept it; `genkeypair`, `exportcert`, `delete`, `certreq` do not |
-| **Output format parity** | No `keytool`-style labels (`Your keystore contains N entries`, `Entry type`, `Certificate chain length`, `Valid from … until …`, `MD5:`), no localization, no columnar alignment |
+| **Output format parity** | No `keytool`-style labels (`Your keystore contains N entries`, `Entry type`, `Certificate chain length`, `Valid from … until …`, `Signature algorithm name`), no localization, no columnar alignment |
 | **Machine-readable output** | Everything is `print()`; no `-rfc`-to-stdout, no structured output, nothing pipeable |
 | **Exit codes** | Success paths exit 0 and errors exit 1, but fatal type errors exit 1 with a **raw Python traceback** (verified for `-keysize` and `-validity`). `keytool` prints `keytool error: …` and exits 1 |
 | **Errors go to stdout** | Messages are printed with `print()`, including errors, so `2>` redirection does not capture failures |
@@ -265,15 +276,15 @@ All of these were reproduced on `origin/dev` (the more complete branch) unless n
 
 ## 10. Suggested priority order
 
-**P0 — make what exists correct and safe (small, high value)**
-1. Fix the `-keysize` / `-validity` argument types (`type=int`) and wrap fatal errors into `keytool`-style messages with exit code 1 (no tracebacks).
-2. Implement multi-entry stores: load → mutate → re-serialize all entries (never truncate an existing store). *Blocks defects 2 and 3.*
-3. Honor `alias` on lookup/delete/export; error clearly when the alias is unknown.
-4. Honor `-keyalg` (RSA/EC/DSA/Ed25519) or reject unsupported values explicitly instead of silently producing RSA.
-5. Honor `-sigalg`, `-keypass` (or remove them from the CLI until supported).
-6. Fix non-verbose `-list` to print alias, creation date, entry type and fingerprint.
-7. Make `main` actually call the crypto layer (or merge/delete `main` in favour of `dev`).
-8. Declare `cryptography` in `requirements.txt`; stop tracking `venv/` and `__pycache__`.
+**P0 — make what exists correct and safe (small, high value)** — *see §11 for status*
+1. Fix the `-keysize` / `-validity` argument types (`type=int`) and wrap fatal errors into `keytool`-style messages with exit code 1 (no tracebacks). — **done**
+2. Implement multi-entry stores: load → mutate → re-serialize all entries (never truncate an existing store). — **mitigated**; no data loss today, full multi-entry pending the decided `asn1crypto` implementation
+3. Honor `alias` on lookup/delete/export; error clearly when the alias is unknown. — **done**
+4. Honor `-keyalg` (RSA/EC/DSA/Ed25519) or reject unsupported values explicitly instead of silently producing RSA. — **done**
+5. Honor `-sigalg`, `-keypass` (or remove them from the CLI until supported). — **done** (`-sigalg` honoured; a differing `-keypass` is rejected explicitly)
+6. Fix non-verbose `-list` to print alias, creation date, entry type and fingerprint. — **done**
+7. Make `main` actually call the crypto layer (or merge/delete `main` in favour of `dev`). — **done**
+8. Declare `cryptography` in `requirements.txt`; stop tracking `venv/` and `__pycache__`. — **done** (`.gitignore` added; `git rm --cached` still to be run by the owner)
 
 **P1 — close the certification gap that makes the tool usable for TLS**
 9. `-ext` support: `san`, `ku`, `eku`, `bc`, `ski`/`aki`, `crl`, `aia`.
@@ -281,7 +292,7 @@ All of these were reproduced on `origin/dev` (the more complete branch) unless n
 11. `-startdate`, and CA mode (`BasicConstraints(ca=True)`) for `genkeypair`/`gencert`.
 12. `-importcert` (with `-noprompt`, `-trustcacerts`, alias assignment) and `-importkeystore`.
 13. Truststore / certificate-only entries + `-cacerts`.
-14. Full `-list -v` / `printcert -v` output parity (extensions, public key, MD5, chain length).
+14. Full `-list -v` / `printcert -v` output parity (extensions, public key, chain length). *Partially done in the P0 pass.*
 
 **P2 — reach real feature parity**
 15. `-changealias`, `-keypasswd`, `-storepasswd`, `-genseckey`, `-importpass`.
@@ -331,3 +342,80 @@ openssl x509 -in c.pem -noout -text | sed -n '/X509v3 extensions/,/Signature Alg
 Cross-checks worth keeping as permanent interop tests: `keytool -list` on a
 pykeytool-written store (works today — the PKCS#12 output is readable by Java), and
 `openssl x509 -text` on an exported certificate.
+
+---
+
+## 11. P0 implementation status
+
+Everything below was verified by running the tool and cross-checking the result with the
+real `keytool` and with `openssl`.
+
+### Fixed
+
+| Defect (from §8) | Before | After |
+| --- | --- | --- |
+| 1 — `main` not wired to crypto | printed the arguments | `main.py` dispatches to real handlers; keys and certificates are produced |
+| 3 — `-delete` ignored the alias | wiped the whole store | unknown alias → `Alias <x> does not exist in <store> (available: alice)`, exit 1, store untouched |
+| 2 — second alias destroyed the store | truncated the file | refuses up front: *"Refusing to generate a key pair: a.p12 already contains 1 entry …"*; the existing entry survives |
+| 4 — explicit `-keysize` crashed | `TypeError` traceback | works; out-of-range values give `Invalid -keysize 100 for RSA (must be between 1024 and 16384)` |
+| 5 — explicit `-validity` crashed | `TypeError` traceback | works; `-validity 0` gives a clean error |
+| 6 — `-keyalg` ignored | always RSA, message claimed otherwise | RSA, EC, DSA, Ed25519 and Ed448 all work; unsupported values are rejected |
+| 8 — `-sigalg` ignored | always SHA-256 | honoured (`SHA384withRSA` → `SHA384withRSA` in the certificate and CSR); incompatible pairs are rejected |
+| 7 — `-keypass` ignored | silently unused | a value differing from `-storepass` is rejected with an explanation |
+| 9 — non-verbose `-list` printed nothing | `Keystore type: PKCS12` only | prints entry count, `alias, date, PrivateKeyEntry,` and the SHA-256 fingerprint |
+| 10 — dead `alias` parameter | built and discarded | aliases are read from the PKCS#12 `friendlyName` and matched case-insensitively |
+| 11 — DN commas lost data | `CN=Doe, John` truncated to `CN=Doe` | `-dname 'CN=Doe\, John, O=ACME'` → `O=ACME,CN=Doe\, John` |
+| 12 — invalid DN produced a broken subject | warning + silent skip | unknown attribute, empty value and non-2-character country codes are all errors |
+| 13 — fatal errors were tracebacks | Python stack trace | `keytool error: <message>` on stderr, exit code 1 (set `PYKEYTOOL_DEBUG=1` to see the traceback) |
+| 15 — 0-byte store written on delete | invalid empty file | deleting the last entry removes the file and says so |
+| P0-8 — `requirements.txt` empty | 0 bytes | declares `cryptography>=42.0`; `.gitignore` added for `venv/`, `__pycache__`, key material |
+
+Compatibility is unchanged in the good direction: stores written by pykeytool are read
+by `keytool -list -v`, and multi-entry stores written by `keytool` are read (first entry)
+by pykeytool.
+
+### Not fixed — approach decided, implementation not started
+
+**P0-2, true multi-entry stores.** `cryptography` cannot do it. Verified against a real
+2-entry store produced by `keytool`:
+
+```python
+obj = pkcs12.load_pkcs12(data, b"secret123")
+obj.key              # -> only ONE private key (alice)
+obj.cert             # -> alice's certificate
+obj.additional_certs # -> bob's certificate, classified as a "CA certificate"
+```
+
+So a second *entry* is indistinguishable from a chain certificate except that it carries
+its own `friendlyName` — which is what this pass uses to detect the situation and refuse
+to write, instead of destroying data. Two further concrete limits:
+
+* `pkcs12.serialize_key_and_certificates(name, key, cert, cas, ...)` writes exactly one
+  entry, and raises `ValueError: You must supply at least one of key, cert, or cas` for an
+  empty store — hence the file removal on delete.
+* The PKCS#12 `creationTime` attribute is not exposed either, so `-list` shows the
+  certificate's `not_valid_before` as the creation date (identical for self-signed
+  entries, approximate for imported ones).
+
+**Decision (2026-10-15): option 1 — own the PKCS#12 format.** Implement multi-entry
+PKCS#12 with `asn1crypto` plus `cryptography` primitives, rather than adopting
+`pyjks` or keeping the guarded behaviour. Not implemented yet.
+
+Options that were considered:
+
+1. **Own the PKCS#12 format** (`asn1crypto` + `cryptography` primitives): parse and emit
+   `AuthenticatedSafe`/`SafeBag` structures, PBES2 (PBKDF2 + AES-CBC) and legacy PBES1
+   (3DES), plus the RFC 7292 Appendix B KDF for the MAC. Java-compatible and unblocks
+   *all* of P0-2, `-importcert`, `-importkeystore` and chain support. Roughly 400 lines
+   plus an interop test loop against `keytool` (which is installed here). **← chosen**
+2. **Add JKS/JCEKS via `pyjks`** (pure Python, multi-entry native) and keep PKCS#12
+   single-entry for now. Solves multi-entry for the `-storetype JKS` path only.
+3. **Stay guarded**: keep the current refuse-to-destroy behaviour and revisit later.
+
+### Next up (P1)
+
+`-ext` (`san`, `ku`, `eku`, `ski`/`aki`), the full RFC 2253 `-dname` parser
+(multi-valued RDNs, hex escapes, arbitrary OIDs), `-startdate`, CA mode, and
+`-importcert` / `-importkeystore`. Note that all of these except `-ext` and `-startdate`
+depend on the multi-entry decision above.
+

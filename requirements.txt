@@ -1,0 +1,2 @@
+# Runtime dependencies
+cryptography>=42.0
