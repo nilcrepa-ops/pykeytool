@@ -1,11 +1,10 @@
 import datetime
 from cryptography import x509
 from cryptography.x509.oid import NameOID
-from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 def generate_rsa_key(bit_size: int = 2048):
-    """Generate an RSA private key"""
     private_key = rsa.generate_private_key(
         public_exponent=65537,
         key_size=bit_size,
@@ -72,3 +71,42 @@ def generate_autosigned_certificate(private_key, dname: str, days_valid=365):
 
     return certificate
     
+def obtain_certificate_info(certificate):
+    sha256_fingerprint = certificate.fingerprint(hashes.SHA256()).hex()
+    sha1_fingerprint = certificate.fingerprint(hashes.SHA1()).hex()
+
+    return {
+        'owner': certificate.subject.rfc4514_string(),
+        'issuer': certificate.issuer.rfc4514_string(),
+        'serial_number': hex(certificate.serial_number)[2:],
+        'not_valid_before': certificate.not_valid_before_utc,
+        'not_valid_after': certificate.not_valid_after_utc,
+        'sha256': sha256_fingerprint,
+        'sha1': sha1_fingerprint
+    }
+
+def serialize_certificate(certificate, rfc_format: bool = False) -> bytes:
+    encoding = serialization.Encoding.PEM if rfc_format else serialization.Encoding.DER
+    return certificate.public_bytes(encoding)
+
+def load_certificate_file(file_path: str):
+    with open(file_path, 'rb') as f:
+        data = f.read()
+
+    try:
+        return x509.load_pem_x509_certificate(data)
+    except ValueError:
+        try:
+            return x509.load_der_x509_certificate(data)
+        except ValueError as e:
+            raise ValueError(f'Error loading certificate: {e}')
+
+def generate_csr(private_key, cert, hash_algorithm=hashes.SHA256()) -> bytes:
+    builder = (
+        x509.CertificateSigningRequestBuilder()
+        .subject_name(cert.subject)
+    )
+
+    csr = builder.sign(private_key, hash_algorithm)
+
+    return csr.public_bytes(serialization.Encoding.PEM)
