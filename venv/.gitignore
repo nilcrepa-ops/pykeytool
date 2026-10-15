@@ -1,0 +1,33 @@
+# Entorno virtual
+venv/
+.venv/
+env/
+
+# Caché y artefactos de Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+
+# Almacenes de claves y certificados locales (evita filtrar claves privadas)
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.crt
+*.cer
+*.pem
+*.der
+*.csr
+*.key
+
+# Configuraciones de editores / IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Archivos del sistema operativo
+Thumbs.db
+Desktop.ini
+.DS_Store

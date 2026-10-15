@@ -1,0 +1,38 @@
+To activate scripts:
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process
+
+To begin from 0:
+    Remove-Item -Force {filenames_to_delete_separated_by_comma} -ErrorAction SilentlyContinue
+
+Generate new keystore:
+    python main.py genkeypair -alias {alias} -keystore {keystore}
+
+Verbose keystore info:
+    python main.py list -keystore {keystore} -v
+
+Export certificate PEM format:
+    python main.py exportcert -alias {alias} -keystore {keystore} -file {certificate}
+
+Inspect certificate:
+    python main.py printcert -file {certificate} -v
+
+Delete entry:
+    python main.py delete -alias {alias} -keystore {keystore}
+
+Generate CSR:
+    python main.py certreq -alias {alias} -keystore {keystore} -file {csr}
+
+Show help:
+    python main.py --help
+
+EVALUABLE:
+help
+Crear certificado:
+    nuevo
+    no repetir alias
+    2 alias
+export alias
+
+github
+extras
+explicar codigo

@@ -1,23 +1,185 @@
+from core.keystore import delete_pkcs12_entry
+from core.crypto import obtain_certificate_info
+from core.keystore import load_keystore_pkcs12
 import sys
-from cli import crear_parser
+import getpass
+from cli import *
+from core.crypto import *
+from core.keystore import *
+
+def execute_genkeypair(args):
+    password = args.storepass
+    password = ask_password(password)
+
+    print(f'Generating key pair {args.keyalg} of {args.keysize} bits...')
+    private_key = generate_rsa_key(args.keysize)
+
+    print(f'Generating self-signed certificate...')
+    dname = args.dname if args.dname else f'CN={args.alias}, O=KeytoolReplica, C=ES'
+    certificate = generate_autosigned_certificate(private_key, dname, args.validity)
+
+    print(f'Packaging and saving in {args.keystore} with alias {args.alias}')
+    try:
+        save_keystore_pkcs12(
+            keystore_path=args.keystore,
+            alias=args.alias,
+            private_key=private_key,
+            certificate=certificate,
+            password=password
+        )
+    except Exception as e:
+        print(f'Error saving keystore: {e}')
+        sys.exit(1)
+
+def execute_list(args):
+    password = args.storepass
+    password = ask_password(password)
+    
+    try:
+        key, cert, cas = load_keystore_pkcs12(args.keystore, password)
+    except Exception as error:
+        print(f"Error loading keystore: {error}")
+        sys.exit(1)
+    
+    print(f"\nKeystore type: PKCS12\n")
+    if not cert and not key and not cas:
+        print("No entries found.\n")
+        return    
+    
+    if args.v:
+        info = obtain_certificate_info(cert)
+        print(f'Owner: {info['owner']}')
+        print(f'Issuer: {info['issuer']}')
+        print(f'Serial number: {info['serial_number']}')
+        print(f'Not valid before: {info['not_valid_before']}')
+        print(f'Not valid after: {info['not_valid_after']}')
+        print(f'SHA1 fingerprint: {info['sha1']}')
+        print(f'SHA256 fingerprint: {info['sha256']}')
+
+def execute_exportcert(args):
+    password = args.storepass
+    password = ask_password(password)
+    
+    try:
+        key, cert, cas = load_keystore_pkcs12(args.keystore, password)
+    except Exception as error:
+        print(f"Error loading keystore: {error}")
+        sys.exit(1)
+    
+    if not cert:
+        print(f'Error: No certificate found in {args.keystore}')
+        sys.exit(1)
+
+    cert_bytes = serialize_certificate(cert, rfc_format=args.rfc)
+
+    try:
+        with open(args.file, "wb") as f:
+            f.write(cert_bytes)
+        print(f'Certificate exported to {args.file}')
+    except Exception as e:
+        print(f'Error exporting certificate: {e}')
+        sys.exit(1)    
+    
+def execute_printcert(args):
+    try:
+        cert = load_certificate_file(args.file)
+    except Exception as error:
+        print(f"Error loading certificate: {error}")
+        sys.exit(1)
+    
+    info = obtain_certificate_info(cert)
+    
+    print(f'Owner: {info['owner']}')
+    print(f'Issuer: {info['issuer']}')
+    print(f'Serial number: {info['serial_number']}')
+    print(f'Not valid before: {info['not_valid_before']}')
+    print(f'Not valid after: {info['not_valid_after']}')
+    print(f'SHA1 fingerprint: {info['sha1']}')
+    print(f'SHA256 fingerprint: {info['sha256']}')
+
+    if args.v:
+        print(f'Version: {cert.version.value}')
+        print(f'Subject: {cert.subject.rfc4514_string()}')
+        print(f'Issuer: {cert.issuer.rfc4514_string()}')
+        print(f'Serial number: {hex(cert.serial_number)[2:]}')
+        print(f'Not valid before: {cert.not_valid_before_utc}')
+        print(f'Not valid after: {cert.not_valid_after_utc}')
+        print(f'SHA1 fingerprint: {cert.fingerprint(hashes.SHA1()).hex()}')
+        print(f'SHA256 fingerprint: {cert.fingerprint(hashes.SHA256()).hex()}')
+
+def execute_delete(args):
+    password = args.storepass
+    password = ask_password(password)
+
+    try:
+        delete_pkcs12_entry(args.keystore, args.alias, password)
+        print(f"Deleted alias '{args.alias}' from {args.keystore}")
+    except Exception as error:
+        print(f"Error deleting entry: {error}")
+        sys.exit(1)
+
+def execute_certreq(args):
+    password = args.storepass
+    password = ask_password(password)
+
+    try:
+        key, cert, _ = load_keystore_pkcs12(args.keystore, password)
+    except Exception as error:
+        print(f'Error loading keystore: {error}')
+        sys.exit(1)
+
+    if not key or not cert:
+        print(f'Error: Entry with alias {args.alias} not found or incomplete')
+        sys.exit(1)
+
+    try:
+        csr_pem = generate_csr(key, cert)
+        with open (args.file, 'wb') as f:
+            f.write(csr_pem)
+        print(f'Certification request stored in file {args.file}')
+    except Exception as error:
+        print(f'Error generating CSR: {error}')
+        sys.exit(1)
+
+def ask_password(password: str) -> str:
+    if not password:
+        password = getpass.getpass("Enter keystore password: ")
+        if len(password) == 0:
+            print("Password cannot be empty")
+            sys.exit(1)
+        elif len(password) < 6:
+            print("Password must be at least 6 characters long")
+            sys.exit(1)
+    return password
 
 def main():
-    parser = crear_parser()
+    parser = create_parser()
+
+    if len(sys.argv) == 1:
+        parser.print_help()
+        sys.exit(1)
     
     args = parser.parse_args()
 
+    if not args.command:
+        parser.print_help()
+        sys.exit(0)
+    
     if args.command == "genkeypair":
-        print(f'You selected genkeypair command')
-        print(f'Alias: {args.alias}')
-        print(f'Keystore: {args.keystore}')
-        print(f'Storepass: {args.storepass}')
-        print(f'Keypass: {args.keypass}')
-        print(f'Dname: {args.dname}')
-        print(f'Keyalg: {args.keyalg}')
-        print(f'Keysize: {args.keysize}')
-        print(f'Validity: {args.validity}')
+        execute_genkeypair(args)
+    elif args.command == "list":
+        execute_list(args)
+    elif args.command == "exportcert":
+        execute_exportcert(args)
+    elif args.command == "printcert":
+        execute_printcert(args)
+    elif args.command == "delete":
+        execute_delete(args)
+    elif args.command == "certreq":
+        execute_certreq(args)
     else:
         parser.print_help()
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
