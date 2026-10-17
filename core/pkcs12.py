@@ -35,6 +35,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
+import datetime
 import secrets
 
 from dataclasses import dataclass, field
@@ -84,6 +85,12 @@ MAC_DIGEST = "sha256"
 BAG_KEY = "key_bag"
 BAG_SHROUDED_KEY = "pkcs8_shrouded_key_bag"
 BAG_CERT = "cert_bag"
+
+#: Java marks a certificate-only bag as a *trusted certificate entry* with this
+#: Oracle-proprietary attribute (``oracleTrustedKeyUsage``). Without it keytool
+#: silently ignores the bag, so the store appears to contain no entries.
+TRUSTED_KEY_USAGE = "trusted_key_usage"
+ANY_EXTENDED_KEY_USAGE = "any_extended_key_usage"
 
 #: cipher name -> (key bytes, iv bytes, algorithm factory)
 _CBC_CIPHERS: dict[str, tuple[int, int, Callable[[bytes], Any]]] = {
@@ -312,6 +319,8 @@ class Pkcs12Entry:
     chain: list[x509.Certificate] = field(default_factory=list)
     #: PKCS#12 `localKeyId`; links a key bag to its certificate bags.
     key_id: Optional[bytes] = None
+    #: Creation time when the format records one (JKS does; PKCS#12 does not).
+    created: Optional[datetime.datetime] = None
 
     @property
     def entry_type(self) -> str:
@@ -595,7 +604,9 @@ def load(data: bytes, password: str) -> Pkcs12File:
 # --------------------------------------------------------------------------- #
 
 
-def _attributes(alias: Optional[str], key_id: Optional[bytes]) -> list[Any]:
+def _attributes(
+    alias: Optional[str], key_id: Optional[bytes], trusted: bool = False
+) -> list[Any]:
     attributes = []
     if alias is not None:
         attributes.append(
@@ -604,6 +615,12 @@ def _attributes(alias: Optional[str], key_id: Optional[bytes]) -> list[Any]:
     if key_id is not None:
         attributes.append(
             asn1pkcs12.Attribute({"type": "local_key_id", "values": [key_id]})
+        )
+    if trusted:
+        attributes.append(
+            asn1pkcs12.Attribute(
+                {"type": TRUSTED_KEY_USAGE, "values": [ANY_EXTENDED_KEY_USAGE]}
+            )
         )
     return attributes
 
@@ -633,6 +650,7 @@ def _certificate_bag(
     certificate: x509.Certificate,
     alias: Optional[str],
     key_id: Optional[bytes],
+    trusted: bool = False,
 ) -> Any:
     der = certificate.public_bytes(serialization.Encoding.DER)
     return asn1pkcs12.SafeBag(
@@ -646,7 +664,7 @@ def _certificate_bag(
                     "cert_value": asn1x509.Certificate.load(der),
                 }
             ),
-            "bag_attributes": _attributes(alias, key_id),
+            "bag_attributes": _attributes(alias, key_id, trusted),
         }
     )
 
@@ -670,8 +688,12 @@ def dump(entries: list[Pkcs12Entry], password: str, preserved_bags: Optional[lis
                     _certificate_bag(entry.certificate, entry.alias, key_id)
                 )
         elif entry.certificate is not None:
-            # Trusted-certificate entry: named by its alias, no key to link to.
-            certificate_bags.append(_certificate_bag(entry.certificate, entry.alias, None))
+            # Trusted-certificate entry: named by its alias, no key to link to,
+            # and tagged with Java's trustedKeyUsage attribute so keytool sees
+            # it as an entry rather than an orphan certificate.
+            certificate_bags.append(
+                _certificate_bag(entry.certificate, entry.alias, None, trusted=True)
+            )
 
         # Chain certificates are stored without a localKeyId and named after
         # their subject, exactly as keytool writes them; the chain is recovered

@@ -23,7 +23,7 @@ from cli import create_parser
 from core.errors import KeytoolError
 
 try:
-    from core import crypto, keystore
+    from core import cacerts, crypto, extensions, keystore
 except (ImportError, KeytoolError) as error:
     # `asn1crypto` is required for PKCS#12 support; report a missing dependency
     # as a normal keytool error rather than an import traceback.
@@ -43,6 +43,18 @@ def fail(message: str) -> int:
     """Report a user-facing error the way keytool does."""
     print(f"keytool error: {message}", file=sys.stderr)
     return 1
+
+
+def resolve_store_path(args: Any) -> str:
+    """Return the keystore to operate on, honouring `-cacerts`."""
+    if getattr(args, "cacerts", False):
+        if getattr(args, "keystore", None):
+            raise KeytoolError("Use either -keystore or -cacerts, not both")
+        return cacerts.find_cacerts()
+    path = getattr(args, "keystore", None)
+    if not path:
+        raise KeytoolError("A keystore is required: pass -keystore <file> or -cacerts")
+    return path
 
 
 # --------------------------------------------------------------------------- #
@@ -116,6 +128,8 @@ def _entry_date(entry: keystore.Entry) -> str:
     a self-signed entry's `not_valid_before` -- which is the creation instant --
     is used instead.
     """
+    if entry.created is not None:
+        return crypto.format_date(entry.created)
     if entry.certificate is None:
         return "unknown"
     return crypto.format_date(entry.certificate.not_valid_before_utc)
@@ -181,7 +195,8 @@ def cmd_genkeypair(args: Any) -> int:
 
     # Refuse a taken alias before generating anything, so a failure never looks
     # like it half-succeeded (keytool does the same).
-    keystore.ensure_alias_available(args.keystore, args.alias, password)
+    store_path = resolve_store_path(args)
+    keystore.ensure_alias_available(store_path, args.alias, password)
 
     private_key = crypto.generate_key_pair(algorithm, key_size)
     display_alg = crypto.display_key_algorithm(algorithm)
@@ -194,7 +209,12 @@ def cmd_genkeypair(args: Any) -> int:
     # keytool announces the work before doing it; the hash name is only known
     # once the key exists, so build the certificate first and print after.
     certificate = crypto.create_self_signed_certificate(
-        private_key, args.dname, args.validity, args.sigalg
+        private_key,
+        args.dname,
+        args.validity,
+        args.sigalg,
+        startdate=args.startdate,
+        extensions=extensions.keytool_args(args.ext),
     )
 
     print(
@@ -202,14 +222,14 @@ def cmd_genkeypair(args: Any) -> int:
         f"({crypto.signature_algorithm_name(certificate)}) "
         f"with a validity of {args.validity} days"
     )
-    print(f"\tfor: {certificate.subject.rfc4514_string()}")
+    print(f"\tfor: {crypto.format_dname(certificate.subject)}")
 
     entry = keystore.Entry(
         alias=args.alias,
         private_key=private_key,
         certificate=certificate,
     )
-    keystore.add_entry(args.keystore, entry, password)
+    keystore.add_entry(store_path, entry, password)
 
     if args.verbose:
         print()
@@ -219,7 +239,8 @@ def cmd_genkeypair(args: Any) -> int:
 
 def cmd_list(args: Any) -> int:
     password = resolve_store_password(args.storepass)
-    store = keystore.load_keystore(args.keystore, password)
+    store_path = resolve_store_path(args)
+    store = keystore.load_keystore(store_path, password)
 
     # Resolve the alias before printing anything, so an unknown alias produces
     # only the error message.
@@ -228,7 +249,7 @@ def cmd_list(args: Any) -> int:
     else:
         entries = store.entries
 
-    print(f"Keystore type: {keystore.KEYSTORE_TYPE}")
+    print(f"Keystore type: {store.format}")
 
     total = len(entries)
     if total == 0:
@@ -239,7 +260,16 @@ def cmd_list(args: Any) -> int:
     print(f"\nYour keystore contains {total} {noun}\n")
 
     for entry in entries:
-        if args.verbose:
+        if args.rfc and entry.certificate is not None:
+            print(f"Alias name: {entry.alias or '<unnamed>'}")
+            print(f"Creation date: {_entry_date(entry)}")
+            print(f"Entry type: {entry.entry_type}")
+            print()
+            sys.stdout.write(
+                crypto.serialize_certificate(entry.certificate, rfc=True).decode("ascii")
+            )
+            print()
+        elif args.verbose:
             print_verbose_entry(entry)
             print()
         else:
@@ -255,7 +285,8 @@ def cmd_exportcert(args: Any) -> int:
     password = resolve_store_password(args.storepass)
     check_key_password(args, password)
 
-    store = keystore.load_keystore(args.keystore, password)
+    store_path = resolve_store_path(args)
+    store = keystore.load_keystore(store_path, password)
     entry = store.find(args.alias)
 
     if entry.certificate is None:
@@ -282,6 +313,11 @@ def cmd_exportcert(args: Any) -> int:
 
 def cmd_printcert(args: Any) -> int:
     certificate = crypto.load_certificate_file(args.file)
+    if args.rfc:
+        sys.stdout.write(
+            crypto.serialize_certificate(certificate, rfc=True).decode("ascii")
+        )
+        return 0
     print_certificate_details(certificate)
     if args.verbose:
         print_verbose_certificate(certificate)
@@ -292,14 +328,20 @@ def cmd_certreq(args: Any) -> int:
     password = resolve_store_password(args.storepass)
     check_key_password(args, password)
 
-    store = keystore.load_keystore(args.keystore, password)
+    store_path = resolve_store_path(args)
+    store = keystore.load_keystore(store_path, password)
     entry = store.find(args.alias)
 
     if entry.private_key is None:
         raise KeytoolError(f"Entry <{args.alias}> has no private key to sign a request with")
 
     subject = entry.certificate.subject if entry.certificate else crypto.parse_dname(None)
-    request = crypto.create_certificate_request(entry.private_key, subject, args.sigalg)
+    request = crypto.create_certificate_request(
+        entry.private_key,
+        subject,
+        args.sigalg,
+        extensions=extensions.keytool_args(args.ext),
+    )
     data = request.public_bytes(serialization.Encoding.PEM)
 
     if args.file is None:
@@ -319,10 +361,107 @@ def cmd_certreq(args: Any) -> int:
 
 def cmd_delete(args: Any) -> int:
     password = resolve_store_password(args.storepass)
-    removed = keystore.delete_entry(args.keystore, args.alias, password)
+    store_path = resolve_store_path(args)
+    removed = keystore.delete_entry(store_path, args.alias, password)
 
     if args.verbose:
-        print(f"Deleted entry <{removed}> from {args.keystore}")
+        print(f"Deleted entry <{removed}> from {store_path}")
+    return 0
+
+
+def cmd_importcert(args: Any) -> int:
+    password = resolve_store_password(args.storepass)
+    check_key_password(args, password)
+    store_path = resolve_store_path(args)
+
+    certificates = crypto.load_certificates_file(args.file)
+
+    # `-trustcacerts` lets the chain be completed from the JDK truststore.
+    trust_pool: list[Any] = []
+    if args.trustcacerts:
+        try:
+            cacerts_path = cacerts.find_cacerts()
+            trust_pool = [
+                entry.certificate
+                for entry in keystore.load_keystore(
+                    cacerts_path, args.cacertspass or "changeit"
+                ).entries
+                if entry.certificate is not None
+            ]
+        except KeytoolError as error:
+            print(f"warning: -trustcacerts ignored: {error}", file=sys.stderr)
+
+    if not args.noprompt:
+        # keytool shows the certificate and asks before trusting it.
+        print("Certificate details:")
+        print_certificate_details(certificates[0])
+        try:
+            answer = input("Trust this certificate? [no]: ")
+        except EOFError:
+            answer = ""
+        if answer.strip().lower() not in ("yes", "y"):
+            print("Certificate was not imported.")
+            return 0
+
+    message = keystore.import_certificate(
+        store_path,
+        args.alias,
+        certificates,
+        password,
+        trust_pool=trust_pool,
+    )
+
+    if args.verbose:
+        print(message)
+    return 0
+
+def cmd_importkeystore(args: Any) -> int:
+    source_password = resolve_store_password(args.srcstorepass)
+    destination_password = resolve_store_password(args.deststorepass, creating=True)
+
+    source = keystore.load_keystore(args.srckeystore, source_password)
+
+    if args.srcalias is not None:
+        entries = [source.find(args.srcalias)]
+    else:
+        entries = source.entries
+
+    if not entries:
+        raise KeytoolError(f"Source keystore {args.srckeystore} has no entries")
+
+    imported = 0
+    for entry in entries:
+        alias = args.destalias if (args.destalias and len(entries) == 1) else entry.alias
+        if not alias:
+            raise KeytoolError(f"Entry in {args.srckeystore} has no alias; use -srcalias")
+
+        if not args.noprompt and entry.private_key is not None:
+            try:
+                answer = input(f"Import the entry <{alias}>? [yes]: ")
+            except EOFError:
+                answer = ""
+            if answer.strip().lower() in ("no", "n"):
+                continue
+
+        keystore.add_entry(
+            args.destkeystore,
+            keystore.Entry(
+                alias=alias,
+                private_key=entry.private_key,
+                certificate=entry.certificate,
+                chain=list(entry.chain),
+            ),
+            destination_password,
+            replace=True,
+        )
+        imported += 1
+        if args.verbose:
+            print(f"Entry for alias {alias} successfully imported.")
+
+    print(
+        f"Import command completed:  {imported} entries successfully imported, "
+        f"{len(entries) - imported} entries failed or cancelled"
+    )
     return 0
 
 
@@ -333,6 +472,8 @@ COMMANDS: dict[str, Callable[[Any], int]] = {
     "printcert": cmd_printcert,
     "certreq": cmd_certreq,
     "delete": cmd_delete,
+    "importcert": cmd_importcert,
+    "importkeystore": cmd_importkeystore,
 }
 
 

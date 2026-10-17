@@ -16,14 +16,16 @@ This document lists **what is missing or broken**. It is based on reading every 
 file plus executing both branches and cross-checking their output against the real
 `keytool` (see [Appendix A](#appendix-a--how-to-reproduce)).
 
-> **Status update (P0 complete, 2026-10-15).** All eight P0 items are implemented on the
-> working tree, including true multi-entry stores (§12). The CLI is wired to the crypto
-> layer in a single codebase; `-keysize`/`-validity` no longer crash; `-keyalg` and
-> `-sigalg` are honoured; aliases are verified on every alias-taking command; errors are
-> reported as `keytool error: …` on stderr with exit code 1 instead of tracebacks; and
-> dependencies are declared. Sections below still describe the pre-fix state for context.
+> **Status update (P1 complete, 2026-10-17).** P0 and P1 are implemented — see §12
+> (multi-entry engine) and §13 (P1: extensions, RFC 2253 names, `-startdate`, CA mode,
+> `-importcert`, `-importkeystore`, `-cacerts`, output parity). While building P1 two
+> interoperability bugs were found and fixed: X.500 names were being encoded in the
+> **reverse** order from keytool, and trusted-certificate entries were invisible to Java
+> because they lacked an Oracle-proprietary attribute. Sections below still describe the
+> pre-fix state for context.
 >
-> **§11** tracks the P0 items and their state; **§12** documents the multi-entry engine.
+> **§11** tracks the P0 items and their state; **§12** documents the multi-entry engine;
+> **§13** documents P1 and the remaining known deviations.
 
 ---
 
@@ -285,12 +287,12 @@ All of these were reproduced on `origin/dev` (the more complete branch) unless n
 8. Declare `cryptography` in `requirements.txt`; stop tracking `venv/` and `__pycache__`. — **done** (`.gitignore` added; `git rm --cached` still to be run by the owner)
 
 **P1 — close the certification gap that makes the tool usable for TLS**
-9. `-ext` support: `san`, `ku`, `eku`, `bc`, `ski`/`aki`, `crl`, `aia`.
-10. `-dname` parsing per RFC 2253 (escaping, multi-valued RDNs, `EmailAddress`, `UID`, `DC`, `SERIALNUMBER`) with validation.
-11. `-startdate`, and CA mode (`BasicConstraints(ca=True)`) for `genkeypair`/`gencert`.
-12. `-importcert` (with `-noprompt`, `-trustcacerts`, alias assignment) and `-importkeystore`.
-13. Truststore / certificate-only entries + `-cacerts`.
-14. Full `-list -v` / `printcert -v` output parity (extensions, public key, chain length). *Partially done in the P0 pass.*
+9. `-ext` support: `san`, `ku`, `eku`, `bc`, `ski`/`aki`, `crl`, `aia`. — **done** (plus `ian`, `sia`, `crldp`, arbitrary OIDs; SKI is created automatically, as keytool does)
+10. `-dname` parsing per RFC 2253 (escaping, multi-valued RDNs, `EmailAddress`, `UID`, `DC`, `SERIALNUMBER`) with validation. — **done** (multi-valued RDNs are flattened; see §13)
+11. `-startdate`, and CA mode (`BasicConstraints(ca=True)`) for `genkeypair`/`gencert`. — **done** for `genkeypair` via `-ext bc:c`; `-gencert` itself is P2
+12. `-importcert` (with `-noprompt`, `-trustcacerts`, alias assignment) and `-importkeystore`. — **done**
+13. Truststore / certificate-only entries + `-cacerts`. — **done** (JKS truststores are read-only)
+14. Full `-list -v` / `printcert -v` output parity (extensions, public key, chain length). — **done**, plus `-rfc`
 
 **P2 — reach real feature parity**
 15. `-changealias`, `-keypasswd`, `-storepasswd`, `-genseckey`, `-importpass`.
@@ -491,3 +493,128 @@ at `.venv/` for development; `.venv/` is git-ignored.
 * `-storetype` is still PKCS#12-only; JKS/JCEKS remains P2.
 
 
+---
+
+## 13. P1 implementation
+
+All six P1 items are implemented. Each behaviour below was cross-checked against
+`keytool` (JDK 27) and `openssl`.
+
+### 13.1 `-ext` (core/extensions.py)
+
+Grammar matches keytool exactly: `-ext {name{:critical}{=value}}`, with `:c` accepted as
+a synonym for `:critical`, `-ext` repeatable, and a duplicate extension replaced by its
+last occurrence.
+
+| Extension | Notes |
+| --- | --- |
+| `bc` | `ca:true`/`ca:false`/`pathlen:N`, bare `N`, and `bc:c` (critical + `ca:true`) |
+| `ku` | all nine usages, with keytool's abbreviations (`dig`, `dS`, `cRLS`) |
+| `eku` | named usages or explicit OIDs |
+| `san` / `ian` | `dns:`, `ip:`, `email:`, `uri:`, `oid:` |
+| `aia` / `sia` | `ocsp:`, `caIssuers:`, `timeStamping:`, `caRepository:`, or an OID |
+| `crl` / `crldp` | `uri:…` distribution points |
+| any OID | value is DER hex, non-hex characters ignored, as keytool documents |
+
+`SubjectKeyIdentifier` is added automatically (keytool: *"The subjectKeyIdentifier
+extension is always created"*), unless the user supplies one explicitly. `-ext` works on
+`-genkeypair` and `-certreq`.
+
+**Verification:** 16 `-ext` forms were encoded with both keytool and pykeytool and the
+resulting extensions compared **byte-for-byte** (OID, criticality and value DER) — all 16
+identical.
+
+### 13.2 RFC 2253 distinguished names
+
+Escaped separators (`\,` `\+` `\"` `\\` `\<` `\>` `\;` `\=` `\#`), hex octet escapes
+(`\41` → `A`), multi-valued RDNs (`CN=A+OU=B`), numeric OID attribute names
+(`2.5.4.3=Bob`) and the documented keyword set. Unknown keywords, empty values and
+non-2-character country codes are errors.
+
+**Bug found and fixed:** the DER encoding was **reversed**. An X.500 name is written
+most-specific-first but encoded in the opposite order (RFC 4514 §2.1); keytool and
+OpenSSL therefore saw `C=ES,O=Acme,CN=Bob` where the user asked for
+`CN=Bob, O=Acme, C=ES`. Every multi-attribute DN generated before this fix has the wrong
+RDN order. Rendering (`-list`, `-printcert`, the `for:` line) now also prints in
+keytool's order.
+
+**Known deviation:** `cryptography` models one attribute per RDN, so a multi-valued RDN
+is flattened into consecutive RDNs. The attributes and values are preserved; the grouping
+is not.
+
+### 13.3 `-startdate` and CA mode
+
+`-startdate` accepts `yyyy/mm/dd[ HH:MM:SS]` (local time, like keytool) and the relative
+forms `+1y`, `-30d`, `+6H`, `-15m` (units `y d H m S`). Verified: `2027/03/01 10:00:00`
+produces `notBefore=Mar 1 09:00:00 2027 GMT` (= 10:00 CET), matching keytool.
+
+CA mode is `-ext bc:c` / `-ext bc=ca:true`, producing `BasicConstraints(ca=TRUE)`,
+critical for `bc:c` exactly as keytool does.
+
+### 13.4 `-importcert` and `-importkeystore`
+
+`-importcert` reads a single certificate (PEM or DER), concatenated PEM certificates, or
+a PKCS#7 chain, and implements both keytool workflows:
+
+* **trusted certificate** (new alias) → a `trustedCertEntry`;
+* **certificate reply** (alias with a private key) → the certificate must match that
+  key, replaces the self-signed one, and the rest become the chain. The chain is
+  completed from the store's own trusted entries, and from `cacerts` with
+  `-trustcacerts`.
+
+`-noprompt` skips the `Trust this certificate? [no]:` confirmation; without it the
+certificate details are shown and the prompt is honoured (EOF counts as "no").
+
+`-importkeystore` copies all entries (or `-srcalias`) into `-destkeystore`, optionally
+renaming with `-destalias`, keeping chains intact.
+
+**Verification:** a CA-signed reply plus its CA certificate imports as
+`Certificate chain length: 2`, which `keytool -list -v` confirms; a leaf-only reply has
+its chain completed to length 2 from the store's trusted CA.
+
+**Bug found and fixed:** Java marks a certificate-only bag as a trusted entry with the
+Oracle-proprietary attribute `2.16.840.1.113894.746875.1.1` (`oracleTrustedKeyUsage`).
+Without it keytool **silently ignores the bag** and reports `Your keystore contains 0
+entries`. Trusted entries are now written with that attribute, and Java reads them.
+
+### 13.5 `-cacerts` and JKS truststores
+
+`-cacerts` resolves the JDK truststore via `JAVA_HOME`, the `keytool` on `PATH`, then the
+usual distribution paths. This platform's `cacerts` is **JKS**, so `core/jks.py`
+implements a read-only JKS parser for trusted-certificate entries (the trailing SHA-1
+integrity digest is verified, so a wrong password is reported). Reading the real
+truststore yields **121 certificates**, the same count and identical fingerprints as
+`keytool -list -cacerts`. JKS creation timestamps are used for the `Creation date` field.
+
+JKS is **read-only**: any command that would write refuses with a clear message rather
+than silently converting the file to PKCS#12. Writing JKS/JCEKS remains P2.
+
+### 13.6 Output parity
+
+`-list` and `-printcert` now accept `-rfc` (PEM output), `-list -rfc` follows keytool's
+`Alias name` / `Creation date` / `Entry type` + PEM layout, and `-list -v` reports
+alias, dates, entry type, chain length, owner/issuer/serial, validity, SHA-1/SHA-256
+fingerprints, signature algorithm, public key description, version and extensions.
+
+### 13.7 Defaults aligned with JDK 27
+
+Previously documented as deviations; now matched to keytool's documented defaults:
+
+| Default | Was | Now |
+| --- | --- | --- |
+| `-validity` | 365 | **90** |
+| RSA `-keysize` | 2048 | **3072** |
+| Default `-sigalg` | fixed SHA-256 | size-dependent (RSA ≤7680 → SHA384withRSA, EC ≥512 → SHA512withECDSA, …) |
+| Extensions on a leaf | `BasicConstraints(ca=false)` | none besides the always-present SKI, like keytool |
+
+### 13.8 Remaining known deviations
+
+* Certificate attribute string types: `cryptography` encodes DirectoryString values as
+  UTF8String; keytool uses PrintableString where the value allows. Semantically
+  equivalent per RFC 5280, and both render identically.
+* Multi-valued RDNs are flattened (§13.2).
+* `-ext honored` exists only for `-gencert`, which is not implemented (P2).
+* `-storetype` accepts JKS for reading only; `-storetype` is otherwise informational.
+* JKS private-key entries are skipped (the protection is Sun-proprietary); only trusted
+  certificates are read.
+* `-keypass` still must equal `-storepass` (P2, with `-keypasswd`).

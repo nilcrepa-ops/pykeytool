@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Optional
 
-from . import pkcs12
+from cryptography.hazmat.primitives import serialization
+
+from . import crypto, jks, pkcs12
 from .errors import KeytoolError
 from .pkcs12 import Pkcs12Entry as Entry  # re-exported for callers
 
@@ -32,6 +34,7 @@ __all__ = [
     "load_keystore",
     "add_entry",
     "delete_entry",
+    "import_certificate",
     "ensure_alias_available",
     "store_exists",
 ]
@@ -39,13 +42,15 @@ __all__ = [
 
 @dataclass
 class Keystore:
-    """The parsed contents of a PKCS#12 file."""
+    """The parsed contents of a keystore file."""
 
     path: str
     password: str
     entries: list[Entry] = field(default_factory=list)
     #: SafeBags we do not model; re-emitted unchanged when the store is saved.
     preserved_bags: list[bytes] = field(default_factory=list)
+    #: "PKCS12" or "JKS". JKS is read-only for now.
+    format: str = KEYSTORE_TYPE
 
     def find(self, alias: Optional[str]) -> Entry:
         """Look an entry up by alias (keytool aliases are case-insensitive)."""
@@ -75,7 +80,7 @@ def store_exists(path: str) -> bool:
 
 
 def load_keystore(path: str, password: str) -> Keystore:
-    """Read every entry in a PKCS#12 keystore."""
+    """Read every entry in a keystore (PKCS#12, or JKS read-only)."""
     if not os.path.exists(path):
         raise KeytoolError(f"Keystore file does not exist: {path}")
     if os.path.getsize(path) == 0:
@@ -87,16 +92,34 @@ def load_keystore(path: str, password: str) -> Keystore:
     except OSError as error:
         raise KeytoolError(f"Can't read keystore {path}: {error.strerror}") from error
 
+    if jks.is_jks(data):
+        jks.verify_digest(data, password)
+        return Keystore(
+            path=path,
+            password=password,
+            entries=[
+                Entry(alias=item.alias, certificate=item.certificate, created=item.created)
+                for item in jks.read_trusted_certificates(data)
+            ],
+            format="JKS",
+        )
+
     parsed = pkcs12.load(data, password)
     return Keystore(
         path=path,
         password=password,
         entries=parsed.entries,
         preserved_bags=parsed.preserved_bags,
+        format=KEYSTORE_TYPE,
     )
 
 
 def _write(store: Keystore) -> None:
+    if store.format != KEYSTORE_TYPE:
+        raise KeytoolError(
+            f"{store.path} is a {store.format} keystore, which this version can "
+            f"only read. Writing JKS is not implemented yet."
+        )
     pkcs12.write(store.path, store.entries, store.password, store.preserved_bags)
 
 
@@ -154,3 +177,81 @@ def delete_entry(path: str, alias: str, password: str) -> str:
     # entries, which is what keytool leaves behind.
     _write(store)
     return removed
+
+
+def _public_key_der(public_key: Any) -> bytes:
+    return public_key.public_bytes(
+        serialization.Encoding.DER,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+
+
+def import_certificate(
+    path: str,
+    alias: str,
+    certificates: list[Any],
+    password: str,
+    trust_pool: Optional[list[Any]] = None,
+) -> str:
+    """Import a certificate (or chain) under `alias` (`-importcert`).
+
+    Two cases, matching keytool:
+
+    * the alias already holds a private key -- the imported certificate must
+      match that key, and it replaces the entry's (typically self-signed)
+      certificate, with the remaining certificates becoming its chain;
+    * otherwise a trusted-certificate entry is created.
+
+    `trust_pool` supplies extra certificates (the store's own trusted entries,
+    plus cacerts with `-trustcacerts`) used to complete the chain.
+
+    Returns a short description of what happened.
+    """
+    if not certificates:
+        raise KeytoolError("No certificates found in the input file")
+
+    if store_exists(path):
+        store = load_keystore(path, password)
+    else:
+        store = Keystore(path=path, password=password)
+
+    wanted = alias.casefold()
+    existing = next(
+        (e for e in store.entries if e.alias is not None and e.alias.casefold() == wanted),
+        None,
+    )
+
+    if existing is not None and existing.private_key is not None:
+        leaf_key = _public_key_der(existing.private_key.public_key())
+        leaf = next(
+            (c for c in certificates if _public_key_der(c.public_key()) == leaf_key),
+            None,
+        )
+        if leaf is None:
+            raise KeytoolError(
+                f"The certificate does not match the private key of entry <{alias}>"
+            )
+        pool = list(certificates) + [
+            e.certificate for e in store.entries if e.certificate is not None
+        ] + list(trust_pool or [])
+        existing.certificate = leaf
+        existing.chain = crypto.complete_chain(leaf, pool)
+        _write(store)
+        return f"Certificate reply was installed in keystore for <{existing.alias}>"
+
+    if existing is not None and existing.private_key is None:
+        existing.certificate = certificates[0]
+        existing.chain = list(certificates[1:])
+        _write(store)
+        return f"Certificate was added to keystore as <{existing.alias}>"
+
+    store.entries.append(
+        Entry(
+            alias=alias,
+            private_key=None,
+            certificate=certificates[0],
+            chain=list(certificates[1:]),
+        )
+    )
+    _write(store)
+    return f"Certificate was added to keystore as <{alias}>"
