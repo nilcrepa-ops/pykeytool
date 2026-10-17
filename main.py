@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """pykeytool entry point.
 
 P0 fixes baked in here (see GAPS.md):
@@ -19,8 +20,15 @@ from typing import Any, Callable, Optional
 from cryptography.hazmat.primitives import hashes, serialization
 
 from cli import create_parser
-from core import crypto, keystore
 from core.errors import KeytoolError
+
+try:
+    from core import crypto, keystore
+except (ImportError, KeytoolError) as error:
+    # `asn1crypto` is required for PKCS#12 support; report a missing dependency
+    # as a normal keytool error rather than an import traceback.
+    print(f"keytool error: {error}", file=sys.stderr)
+    raise SystemExit(1)
 
 #: Minimum password length keytool enforces when a *new* password is set.
 MIN_PASSWORD_LENGTH = 6
@@ -171,9 +179,9 @@ def cmd_genkeypair(args: Any) -> int:
     key_size = crypto.validate_key_size(algorithm, args.keysize)
     effective_size = crypto.DEFAULT_KEY_SIZE[algorithm] if key_size is None else key_size
 
-    # Refuse a store we cannot merge into *before* generating anything, so a
-    # failure never looks like it half-succeeded.
-    keystore.ensure_writable(args.keystore, password, action="generate a key pair")
+    # Refuse a taken alias before generating anything, so a failure never looks
+    # like it half-succeeded (keytool does the same).
+    keystore.ensure_alias_available(args.keystore, args.alias, password)
 
     private_key = crypto.generate_key_pair(algorithm, key_size)
     display_alg = crypto.display_key_algorithm(algorithm)
@@ -201,7 +209,7 @@ def cmd_genkeypair(args: Any) -> int:
         private_key=private_key,
         certificate=certificate,
     )
-    keystore.save_entry(args.keystore, entry, password, action="generate a key pair")
+    keystore.add_entry(args.keystore, entry, password)
 
     if args.verbose:
         print()
@@ -222,7 +230,7 @@ def cmd_list(args: Any) -> int:
 
     print(f"Keystore type: {keystore.KEYSTORE_TYPE}")
 
-    total = len(entries) + (len(store.unsupported_aliases) if args.alias is None else 0)
+    total = len(entries)
     if total == 0:
         print("\nYour keystore contains 0 entries")
         return 0
@@ -240,11 +248,6 @@ def cmd_list(args: Any) -> int:
             if digest:
                 print(f"Certificate fingerprint (SHA-256): {digest}")
 
-    for alias in store.unsupported_aliases:
-        print(
-            f"[{alias}] not listed: {keystore.MULTI_ENTRY_MESSAGE}",
-            file=sys.stderr,
-        )
     return 0
 
 
@@ -316,12 +319,10 @@ def cmd_certreq(args: Any) -> int:
 
 def cmd_delete(args: Any) -> int:
     password = resolve_store_password(args.storepass)
-    removed, store_now_empty = keystore.delete_entry(args.keystore, args.alias, password)
+    removed = keystore.delete_entry(args.keystore, args.alias, password)
 
     if args.verbose:
         print(f"Deleted entry <{removed}> from {args.keystore}")
-        if store_now_empty:
-            print(f"(the keystore is now empty, so {args.keystore} was removed)")
     return 0
 
 

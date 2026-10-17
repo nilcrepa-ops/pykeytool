@@ -12,9 +12,7 @@ venv/
 env/
 
 # Local scratch / test artifacts
-.probe/
-.p12probe/
-.gapcheck/
+.work/
 .verify/
 *.p12
 *.jks

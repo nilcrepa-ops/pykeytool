@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Command line interface definition.
 
 The option surface is modelled on the real `keytool`: single-dash long options

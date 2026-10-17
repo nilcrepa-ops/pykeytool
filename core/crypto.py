@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Key pair, certificate and CSR generation.
 
 P0 scope (see GAPS.md):

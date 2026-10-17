@@ -16,16 +16,14 @@ This document lists **what is missing or broken**. It is based on reading every 
 file plus executing both branches and cross-checking their output against the real
 `keytool` (see [Appendix A](#appendix-a--how-to-reproduce)).
 
-> **Status update (P0 pass, 2026-10-15).** The P0 list in §10 has been implemented on
-> the working tree. What changed: the CLI is now wired to the crypto layer and lives in
-> a single codebase; `-keysize`/`-validity` no longer crash; `-keyalg` and `-sigalg` are
-> honoured; aliases are verified on every alias-taking command; errors are reported as
-> `keytool error: …` on stderr with exit code 1 instead of tracebacks; the data-loss
-> bugs are gone (an existing store is never truncated); and dependencies are declared.
-> The one P0 item that is only *mitigated*, not solved, is true multi-entry stores —
-> see §3 and §11. Sections below still describe the pre-fix state for context.
+> **Status update (P0 complete, 2026-10-15).** All eight P0 items are implemented on the
+> working tree, including true multi-entry stores (§12). The CLI is wired to the crypto
+> layer in a single codebase; `-keysize`/`-validity` no longer crash; `-keyalg` and
+> `-sigalg` are honoured; aliases are verified on every alias-taking command; errors are
+> reported as `keytool error: …` on stderr with exit code 1 instead of tracebacks; and
+> dependencies are declared. Sections below still describe the pre-fix state for context.
 >
-> **§11** at the bottom of this file tracks the P0 items and their current state.
+> **§11** tracks the P0 items and their state; **§12** documents the multi-entry engine.
 
 ---
 
@@ -278,7 +276,7 @@ All of these were reproduced on `origin/dev` (the more complete branch) unless n
 
 **P0 — make what exists correct and safe (small, high value)** — *see §11 for status*
 1. Fix the `-keysize` / `-validity` argument types (`type=int`) and wrap fatal errors into `keytool`-style messages with exit code 1 (no tracebacks). — **done**
-2. Implement multi-entry stores: load → mutate → re-serialize all entries (never truncate an existing store). — **mitigated**; no data loss today, full multi-entry pending the decided `asn1crypto` implementation
+2. Implement multi-entry stores: load → mutate → re-serialize all entries (never truncate an existing store). — **done** (see §12)
 3. Honor `alias` on lookup/delete/export; error clearly when the alias is unknown. — **done**
 4. Honor `-keyalg` (RSA/EC/DSA/Ed25519) or reject unsupported values explicitly instead of silently producing RSA. — **done**
 5. Honor `-sigalg`, `-keypass` (or remove them from the CLI until supported). — **done** (`-sigalg` honoured; a differing `-keypass` is rejected explicitly)
@@ -397,17 +395,16 @@ to write, instead of destroying data. Two further concrete limits:
   certificate's `not_valid_before` as the creation date (identical for self-signed
   entries, approximate for imported ones).
 
-**Decision (2026-10-15): option 1 — own the PKCS#12 format.** Implement multi-entry
-PKCS#12 with `asn1crypto` plus `cryptography` primitives, rather than adopting
-`pyjks` or keeping the guarded behaviour. Not implemented yet.
+**Decision (2026-10-15): option 1 — own the PKCS#12 format.** Implemented — see §12.
+Multi-entry PKCS#12 is now built on `asn1crypto` plus `cryptography` primitives rather
+than adopting `pyjks` or keeping the guarded behaviour.
 
 Options that were considered:
 
 1. **Own the PKCS#12 format** (`asn1crypto` + `cryptography` primitives): parse and emit
    `AuthenticatedSafe`/`SafeBag` structures, PBES2 (PBKDF2 + AES-CBC) and legacy PBES1
    (3DES), plus the RFC 7292 Appendix B KDF for the MAC. Java-compatible and unblocks
-   *all* of P0-2, `-importcert`, `-importkeystore` and chain support. Roughly 400 lines
-   plus an interop test loop against `keytool` (which is installed here). **← chosen**
+   *all* of P0-2, `-importcert`, `-importkeystore` and chain support. **← chosen, done**
 2. **Add JKS/JCEKS via `pyjks`** (pure Python, multi-entry native) and keep PKCS#12
    single-entry for now. Solves multi-entry for the `-storetype JKS` path only.
 3. **Stay guarded**: keep the current refuse-to-destroy behaviour and revisit later.
@@ -416,6 +413,81 @@ Options that were considered:
 
 `-ext` (`san`, `ku`, `eku`, `ski`/`aki`), the full RFC 2253 `-dname` parser
 (multi-valued RDNs, hex escapes, arbitrary OIDs), `-startdate`, CA mode, and
-`-importcert` / `-importkeystore`. Note that all of these except `-ext` and `-startdate`
-depend on the multi-entry decision above.
+`-importcert` / `-importkeystore`. Chain *reading* already works (see §12), so
+`-importcert` is now mostly a matter of merging an incoming chain into an entry.
+
+---
+
+## 12. P0-2 implementation — true multi-entry stores (done)
+
+`core/pkcs12.py` now reads and writes PKCS#12 directly instead of going through
+`cryptography`'s single-key helper, so a store can hold any number of entries.
+
+### What was built
+
+| Piece | Detail |
+| --- | --- |
+| RFC 7292 KDF | Appendix B.2 (`pkcs12_kdf`), validated **byte-for-byte** against the MAC of a keytool-written store |
+| MAC | HMAC-SHA256 over the `authSafe` content, 10000 iterations, verified on load and written on save |
+| PBES2 | PBKDF2-HMAC-SHA256 + AES-128/192/256-CBC, used for the shrouded keys and the certificate section |
+| PBES1 | `PBEWithSHAAnd3KeyTripleDESCBC` (Java 8's default) decrypted with the PKCS#12 KDF |
+| Entry grouping | leaf certificate matched to its key by `localKeyId`, chains rebuilt by issuer/subject DN, leftovers become `trustedCertEntry` |
+| Unknown bags | secret bags, CRLs and anything unmodelled are kept as raw DER and re-emitted on save, so saving never discards content |
+| Writes | atomic (temp file + `os.replace`) with `0600` permissions, since a keystore holds private keys |
+
+### Layout written (determined by inspecting a JDK 27 store)
+
+```
+PFX
+├── authSafe: ContentInfo(data) ── OCTET STRING ── AuthenticatedSafe
+│   ├── ContentInfo(data)            → SafeContents [pkcs8ShroudedKeyBag × N]
+│   └── ContentInfo(encrypted_data)  → PBES2(AES-256-CBC) → SafeContents [certBag × M]
+└── macData: HMAC-SHA256, 20-byte salt, 10000 iterations
+```
+
+Key bags are individually encrypted, so Java keeps that section in plaintext; the
+certificate section is encrypted as a whole. Chain certificates are written **without** a
+`localKeyId` and named after their subject, exactly as keytool does — which is why
+chains have to be recovered from the issuer/subject relationship rather than from the id.
+
+### Verified against Java (keytool) and OpenSSL
+
+* `keytool -list -v` reads a 3-entry store written by pykeytool, with correct key types
+  (RSA/EC/Ed25519) and chain lengths.
+* `keytool -certreq` **signs with a key pykeytool wrote**, proving the shrouded key
+  decrypts (not just that the file parses).
+* `keytool -importkeystore` re-imports every entry successfully.
+* Exported certificates are byte-identical to the originals (SHA-256 fingerprints match).
+* A real CA chain written by keytool is read (2 entries, `server` with chain length 2,
+  `ca` as a trusted entry), survives a pykeytool rewrite, and is still reported by Java as
+  chain length 2.
+* Deleting the last entry leaves a **valid 122-byte empty store** that Java reads as
+  "0 entries" — no more file removal and no 0-byte corruption.
+* `openssl pkcs12` parses the output, verifies the MAC, and separates `-clcerts` from
+  `-cacerts` correctly.
+
+### Behavioural changes
+
+| Before | After |
+| --- | --- |
+| Second `genkeypair` refused (to avoid destroying the first) | Adds a second entry |
+| `delete` removed the whole store / the file | Removes exactly one entry; the store survives, even when emptied |
+| Non-representable entries reported as unreadable | All entries readable; chains reconstructed |
+| `-createTime` unavailable | Still approximated by the certificate's `not_valid_before` (the PKCS#12 time attribute is not exposed by `asn1crypto` either) |
+
+### Dependency note
+
+`asn1crypto>=1.5.1` is now required and declared in `requirements.txt`. If it is missing,
+the tool reports `keytool error: PKCS#12 keystore support requires the 'asn1crypto'
+package…` and exits 1 rather than raising an import traceback. A virtualenv was created
+at `.venv/` for development; `.venv/` is git-ignored.
+
+### Still open
+
+* `-keypass` remains rejected when it differs from `-storepass`. Now that the format is
+  under our control this is easy to support (encrypt the key bag with the key password,
+  the certificate section and MAC with the store password), but it belongs with
+  `-keypasswd` in P2.
+* `-storetype` is still PKCS#12-only; JKS/JCEKS remains P2.
+
 

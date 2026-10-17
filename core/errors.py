@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Error types shared by the core modules and the CLI.
 
 `KeytoolError` is the only exception the CLI is expected to surface to the user.

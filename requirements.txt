@@ -1,2 +1,7 @@
 # Runtime dependencies
+#
+#   cryptography  key generation, certificates, CSRs, PBKDF2/AES/HMAC primitives
+#   asn1crypto     ASN.1 structures, needed for multi-entry PKCS#12 support
+#
 cryptography>=42.0
+asn1crypto>=1.5.1
