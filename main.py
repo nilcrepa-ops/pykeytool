@@ -1,3 +1,4 @@
+import os
 from core.keystore import delete_pkcs12_entry
 from core.crypto import obtain_certificate_info
 from core.keystore import load_keystore_pkcs12
@@ -10,6 +11,25 @@ from core.keystore import *
 def execute_genkeypair(args):
     password = args.storepass
     password = ask_password(password)
+
+    if os.path.exists(args.keystore) and os.path.getsize(args.keystore) > 0:
+        try:
+            keystore = load_keystore_pkcs12(args.keystore, password)
+        except Exception as error:
+            print(f'Error loading keystore: {error}')
+            sys.exit(1)
+
+        existing_aliases = []
+        if hasattr(keystore, 'cert') and keystore.cert and keystore.cert.friendly_name:
+            existing_aliases.append(keystore.cert.friendly_name.decode('utf-8'))
+        if hasattr(keystore, 'additional_certs') and keystore.additional_certs:
+            for add_cert in keystore.additional_certs:
+                if add_cert.friendly_name:
+                    existing_aliases.append(add_cert.friendly_name.decode('utf-8'))
+
+        if args.alias in existing_aliases:
+            print(f"Error: Key pair not generated, alias <{args.alias}> already exists")
+            sys.exit(1)
 
     print(f'Generating key pair {args.keyalg} of {args.keysize} bits...')
     private_key = generate_rsa_key(args.keysize)

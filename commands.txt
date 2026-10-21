@@ -4,7 +4,13 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process
 To begin from 0:
     Remove-Item -Force {filenames_to_delete_separated_by_comma} -ErrorAction SilentlyContinue
 
-Generate new keystore:
+Generate new keystore (prompts password twice):
+    python main.py genkeypair -alias {alias} -keystore {keystore}
+
+Add second entry / multiple aliases to same keystore:
+    python main.py genkeypair -alias {alias2} -keystore {keystore}
+
+Test duplicate alias validation (fails if alias already exists):
     python main.py genkeypair -alias {alias} -keystore {keystore}
 
 Verbose keystore info:
@@ -26,13 +32,24 @@ Show help:
     python main.py --help
 
 EVALUABLE:
-help
-Crear certificado:
-    nuevo
-    no repetir alias
-    2 alias
-export alias
+1. Help:
+    python main.py --help
 
-github
-extras
-explicar codigo
+2. Crear certificado:
+    - Nuevo (solicita contraseña 2 veces y verifica coincidencia):
+        python main.py genkeypair -alias cert1 -keystore mykeystore.p12
+    - No repetir alias (comprueba existencia previa y aborta con error):
+        python main.py genkeypair -alias cert1 -keystore mykeystore.p12
+    - 2 alias (guarda múltiples certificados independientes en el mismo archivo):
+        python main.py genkeypair -alias cert2 -keystore mykeystore.p12
+
+3. Exportar alias:
+    python main.py exportcert -alias cert1 -keystore mykeystore.p12 -file cert1.crt
+
+4. Eliminar entrada:
+    python main.py delete -alias cert1 -keystore mykeystore.p12
+
+Extras / Evaluacion:
+- github: commits y ramas actualizadas
+- extras: verificacion de contrasenia doble y builder de multiples entradas
+- explicar codigo: arquitectura modular en core/keystore.py, core/crypto.py y main.py
