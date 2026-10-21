@@ -150,6 +150,11 @@ def ask_password(password: str) -> str:
         elif len(password) < 6:
             print("Password must be at least 6 characters long")
             sys.exit(1)
+
+        password_confirm = getpass.getpass("Re-enter new password: ")
+        if password != password_confirm:
+            print("Passwords do not match")
+            sys.exit(1)
     return password
 
 def main():
