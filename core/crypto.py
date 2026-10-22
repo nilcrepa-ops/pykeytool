@@ -85,9 +85,8 @@ def obtain_certificate_info(certificate):
         'sha1': sha1_fingerprint
     }
 
-def serialize_certificate(certificate, rfc_format: bool = False) -> bytes:
-    encoding = serialization.Encoding.PEM if rfc_format else serialization.Encoding.DER
-    return certificate.public_bytes(encoding)
+def serialize_certificate(certificate, rfc_format: bool = True) -> bytes:
+    return certificate.public_bytes(serialization.Encoding.PEM)
 
 def load_certificate_file(file_path: str):
     with open(file_path, 'rb') as f:
